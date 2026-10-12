@@ -1,0 +1,1780 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Aether IT API",
+    "version": "1.0.0",
+    "description": "Authentication, administration, and project workflow endpoints. JWT access tokens last 48 hours; signed guest project tokens scope guest access to a single project."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current Aether IT deployment"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication"
+    },
+    {
+      "name": "Users"
+    },
+    {
+      "name": "Employees",
+      "description": "Employee directory records. Writes require an administrator JWT."
+    },
+    {
+      "name": "Services",
+      "description": "Service catalog records. Writes require an administrator JWT."
+    },
+    {
+      "name": "Website Content",
+      "description": "Website content sections. Writes require an administrator JWT."
+    },
+    {
+      "name": "Projects",
+      "description": "Create, list, and manage projects. Use a signed-in JWT or the matching guest project token."
+    },
+    {
+      "name": "Conversations & Messages",
+      "description": "Start project conversations and send or review messages with the AI."
+    },
+    {
+      "name": "AI Analysis",
+      "description": "Generate and retrieve the structured AI analysis for a project."
+    },
+    {
+      "name": "Documents",
+      "description": "Create, list, and securely download private PDF/DOCX exports."
+    }
+  ],
+  "paths": {
+    "/api/auth/signup": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Create a customer account",
+        "operationId": "signup",
+        "description": "Public registration always assigns the CUSTOMER role. If guestProjectToken is supplied, links that existing guest project to the new account without changing the project ID.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              },
+              "example": {
+                "name": "Jane Doe",
+                "email": "jane@example.com",
+                "password": "Choose-a-long-password-123",
+                "phone": "+216 20 123 456"
+              }
+
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. On success, returns the user and a JWT access token (201); errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/AuthResponse" },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Log in",
+        "operationId": "login",
+        "description": "Returns a signed JWT accessToken valid for 48 hours. Optionally claims the existing guest project identified by guestProjectToken.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              },
+              "example": {
+                "email": "jane@example.com",
+                "password": "Choose-a-long-password-123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. On success, returns the user and a JWT access token (200); errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/AuthResponse" },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Change the current account password",
+        "operationId": "changePassword",
+        "description": "Requires the account's JWT Bearer token and current password. A successful change invalidates all existing JWTs, including the one used for this request; log in again afterward.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              },
+              "example": {
+                "currentPassword": "Current-Password-123",
+                "newPassword": "New-Password-123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success confirms the password change; an invalid JWT or current password returns an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/MessageResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/forgot-password": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Request a password reset",
+        "operationId": "requestPasswordReset",
+        "description": "Always returns the same message whether or not the email belongs to an account. Sends a six-digit, single-use verification code by email when eligible; requests are limited to one per account per minute.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              },
+              "example": {
+                "email": "jane@example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. The same message is returned whether or not the email exists; missing SMTP configuration returns HTTP 503 and email delivery failures return a server error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/MessageResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Reset a password",
+        "operationId": "resetPassword",
+        "description": "Consumes the six-digit, single-use code sent to the email address. Codes expire after 60 minutes and are locked after 5 incorrect attempts. A successful password reset invalidates the account's existing JWT access tokens.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              },
+              "example": {
+                "email": "jane@example.com",
+                "code": "123456",
+                "password": "New-Password-123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success confirms the password change; invalid, expired, or locked codes return an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/MessageResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Log out",
+        "operationId": "logout",
+        "description": "Requires a valid Bearer JWT. The client must discard the token; stateless access tokens remain valid until they expire.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns 200 with a success message; errors return their HTTP status and an error message."
+          }
+        }
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "tags": ["Authentication"],
+        "summary": "Get the current account",
+        "operationId": "getCurrentUser",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns the current user; errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UserResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "List users",
+        "operationId": "listUsers",
+        "description": "Admin only. Returns up to 50 users per page.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "description": "1-based page number.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns a paginated user list; errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UserList"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Users"],
+        "summary": "Create a customer account",
+        "operationId": "createUser",
+        "description": "Alias of POST /api/auth/signup. Public registration always creates a CUSTOMER.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. On success, returns 201 and a user with a JWT access token; errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AuthResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "description": "User UUID.",
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": ["Users"],
+        "summary": "Get a user",
+        "operationId": "getUser",
+        "description": "Available to the account owner or an administrator.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns the user account; errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UserResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+
+      },
+      "patch": {
+        "tags": ["Users"],
+        "summary": "Update a user",
+        "operationId": "updateUser",
+        "description": "Users can update their own profile; use POST /api/auth/change-password to change your own password. Administrators can change other users' passwords and roles. The last administrator cannot be demoted.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns the updated user; errors return their HTTP status and an error message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/UserResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Error"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Users"],
+        "summary": "Delete a user",
+        "operationId": "deleteUser",
+        "description": "Available to the account owner or an administrator. Deletion is blocked while the account owns projects and for the last administrator.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "One response entry for all outcomes. Success returns HTTP 204 with no body; errors return their HTTP status and an error message."
+          }
+        }
+      }
+    },
+    "/api/employees": {
+      "get": {
+        "tags": ["Employees"],
+        "summary": "List employees",
+        "operationId": "listEmployees",
+        "description": "Public read access for website display.",
+        "responses": {
+          "default": {
+            "description": "Returns employees or an error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EmployeeList" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Employees"],
+        "summary": "Create an employee",
+        "operationId": "createEmployee",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "role"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "example": "Jane Smith",
+                    "description": "Employee's full name."
+                  },
+                  "role": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "example": "Senior Designer",
+                    "description": "Job title or role."
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 10000,
+                    "example": "Leads product design and user research.",
+                    "description": "Short employee biography."
+                  },
+                  "photo": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional photo file: PNG, JPEG, WebP, GIF, or AVIF, up to 5 MB."
+                  },
+                  "linkedinUrl": {
+                    "type": "string",
+                    "format": "uri",
+                    "example": "https://www.linkedin.com/in/jane-smith",
+                    "description": "Employee LinkedIn profile URL."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Creates an employee record or returns an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/EmployeeResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/employees/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "tags": ["Employees"],
+        "summary": "Get an employee",
+        "operationId": "getEmployee",
+        "responses": {
+          "default": {
+            "description": "Returns the employee or an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/EmployeeResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Employees"],
+        "summary": "Update an employee",
+        "operationId": "updateEmployee",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EmployeeUpdate" }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "role": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "description": { "type": "string", "nullable": true, "maxLength": 10000 },
+                  "photo": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional replacement photo: PNG, JPEG, WebP, GIF, or AVIF, up to 5 MB."
+                  },
+                  "linkedinUrl": { "type": "string", "format": "uri", "nullable": true }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Updates employee details and can replace the photo using multipart/form-data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/EmployeeResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Employees"],
+        "summary": "Delete an employee",
+        "operationId": "deleteEmployee",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "default": { "description": "Admin-only. Deletes the employee or returns an error." }
+        }
+      }
+    },
+    "/api/services": {
+      "get": {
+        "tags": ["Services"],
+        "summary": "List services",
+        "operationId": "listServices",
+        "description": "Public read access for website display.",
+        "responses": {
+          "default": {
+            "description": "Returns services or an error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ServiceList" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Services"],
+        "summary": "Create a service",
+        "operationId": "createService",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ServiceInput" }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Creates a service or returns an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ServiceResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/services/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "tags": ["Services"],
+        "summary": "Get a service",
+        "operationId": "getService",
+        "responses": {
+          "default": {
+            "description": "Returns the service or an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ServiceResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Services"],
+        "summary": "Update a service",
+        "operationId": "updateService",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ServiceUpdate" }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Returns the updated service or an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/ServiceResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Services"],
+        "summary": "Delete a service",
+        "operationId": "deleteService",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "default": { "description": "Admin-only. Deletes the service or returns an error." }
+        }
+      }
+    },
+    "/api/website-content": {
+      "get": {
+        "tags": ["Website Content"],
+        "summary": "List website content",
+        "operationId": "listWebsiteContent",
+        "description": "Public read access for website display.",
+        "responses": {
+          "default": {
+            "description": "Returns website content or an error.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/WebsiteContentList" }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Website Content"],
+        "summary": "Create website content",
+        "operationId": "createWebsiteContent",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["section"],
+                "properties": {
+                  "section": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 120,
+                    "example": "hero",
+                    "description": "Unique section key, such as hero, about, or contact."
+                  },
+                  "title": {
+                    "type": "string",
+                    "maxLength": 300,
+                    "example": "Welcome to Aether IT",
+                    "description": "Heading shown on the website."
+                  },
+                  "content": {
+                    "type": "string",
+                    "maxLength": 50000,
+                    "example": "We build digital products for growing businesses.",
+                    "description": "Text displayed in this section."
+                  },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional image file: PNG, JPEG, WebP, GIF, or AVIF, up to 5 MB."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Creates website content or returns an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/WebsiteContentResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/website-content/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": { "type": "string", "format": "uuid" }
+        }
+      ],
+      "get": {
+        "tags": ["Website Content"],
+        "summary": "Get website content",
+        "operationId": "getWebsiteContent",
+        "responses": {
+          "default": {
+            "description": "Returns website content or an error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/WebsiteContentResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": ["Website Content"],
+        "summary": "Update website content",
+        "operationId": "updateWebsiteContent",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/WebsiteContentUpdate" }
+            },
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "minProperties": 1,
+                "properties": {
+                  "section": { "type": "string", "minLength": 1, "maxLength": 120 },
+                  "title": { "type": "string", "nullable": true, "maxLength": 300 },
+                  "content": { "type": "string", "nullable": true, "maxLength": 50000 },
+                  "image": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional replacement image: PNG, JPEG, WebP, GIF, or AVIF, up to 5 MB."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Admin-only. Updates content and can replace its image using multipart/form-data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    { "$ref": "#/components/schemas/WebsiteContentResponse" },
+                    { "$ref": "#/components/schemas/Error" }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": ["Website Content"],
+        "summary": "Delete website content",
+        "operationId": "deleteWebsiteContent",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "default": { "description": "Admin-only. Deletes website content or returns an error." }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "List accessible projects",
+        "operationId": "listProjects",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns projects owned by the signed-in user, all projects for an admin, or the single project matching a guest token."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Create a project",
+        "operationId": "createProject",
+        "description": "Send a user JWT to create an owned project with guest fields omitted. Without a JWT, provide guestName and guestEmail; the response returns a signed guestProjectToken.",
+        "security": [{ "bearerAuth": [] }, {}],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateRequest"
+              },
+              "example": {
+                "title": "A mobile booking platform",
+                "description": "A way to find and book local services.",
+                "guestName": "Jane Doe",
+                "guestEmail": "jane@example.com",
+                "guestPhone": "+216 20 123 456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Creates an owned project for a JWT user or a guest project and returns a guestProjectToken for subsequent access."
+          }
+        }
+      }
+    },
+    "/api/projects/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Get project details",
+        "operationId": "getProject",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns project details, analysis, conversations, and document metadata."
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Projects"
+        ],
+        "summary": "Update project details",
+        "operationId": "updateProject",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Updates title and/or description for the project owner or admin. Only admins can change project status."
+          }
+        }
+      }
+    },
+    "/api/projects/{id}/conversations": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Conversations & Messages"
+        ],
+        "summary": "List project conversations",
+        "operationId": "listProjectConversations",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns conversations ordered by creation time."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Conversations & Messages"
+        ],
+        "summary": "Start a conversation",
+        "operationId": "startConversation",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Creates a conversation and sets the project status to IN_PROGRESS."
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/messages": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Conversations & Messages"
+        ],
+        "summary": "List conversation messages",
+        "operationId": "listConversationMessages",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns messages in stable chronological order."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Conversations & Messages"
+        ],
+        "summary": "Send a message",
+        "operationId": "sendMessage",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageCreateRequest"
+              },
+              "example": {
+                "content": "I want to help local shops manage appointments.",
+                "sender": "USER"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Saves a user or administrator message and returns it with the AI reply. Only administrators may set sender to ADMIN. If AI generation fails, the saved message is returned with the error."
+          }
+        }
+      }
+    },
+    "/api/conversations/{id}/finish": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "Conversations & Messages"
+        ],
+        "summary": "Finish conversation and generate analysis",
+        "operationId": "finishConversation",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Generates/updates the project analysis and sets status to COMPLETED."
+          }
+        }
+      }
+    },
+    "/api/projects/{id}/analysis": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "AI Analysis"
+        ],
+        "summary": "Get project AI analysis",
+        "operationId": "getProjectAnalysis",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns the saved structured analysis."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "AI Analysis"
+        ],
+        "summary": "Generate project AI analysis",
+        "operationId": "generateProjectAnalysis",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Synthesizes project messages and saves the structured analysis."
+          }
+        }
+      }
+    },
+    "/api/projects/{id}/documents": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "List project exports",
+        "operationId": "listProjectDocuments",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Returns private document metadata and IDs."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Export analysis",
+        "operationId": "exportProjectAnalysis",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentExportRequest"
+              },
+              "example": {
+                "type": "PDF",
+                "documentKind": "CAHIER_DES_CHARGES"
+              }
+            }
+          }
+        },
+        "responses": {
+          "default": {
+            "description": "Generates a private PDF or DOCX export and creates its Document record. Set documentKind to CAHIER_DES_CHARGES for a French specification document; omit it for the standard analysis export."
+          }
+        }
+      }
+    },
+    "/api/documents/{id}/download": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "Documents"
+        ],
+        "summary": "Download a project export",
+        "operationId": "downloadProjectDocument",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "Streams a private file after project-access authorization.",
+            "content": {
+              "application/pdf": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Use the accessToken returned by signup/login. Paste the token only (do not include the word Bearer)."
+      }
+    },
+    "schemas": {
+      "SignupRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "email", "password"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 6,
+            "maxLength": 72,
+            "description": "At least 6 characters and no more than 72 UTF-8 bytes."
+          },
+          "phone": {
+            "type": "string",
+            "maxLength": 40,
+            "description": "Optional phone number."
+          },
+          "guestProjectToken": {
+            "type": "string",
+            "description": "Optional signed token used to link the existing guest project to this account."
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "format": "password"
+          },
+          "guestProjectToken": {
+            "type": "string",
+            "description": "Optional signed token used to link the existing guest project to this account."
+          }
+        }
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["currentPassword", "newPassword"],
+        "properties": {
+          "currentPassword": {
+            "type": "string",
+            "format": "password"
+          },
+          "newPassword": {
+            "type": "string",
+            "format": "password",
+            "minLength": 6,
+            "maxLength": 72,
+            "description": "At least 6 characters and no more than 72 UTF-8 bytes."
+          }
+        }
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["email", "code", "password"],
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "code": {
+            "type": "string",
+            "pattern": "^\\d{6}$",
+            "description": "Six-digit, single-use verification code received by email."
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 6,
+            "maxLength": 72,
+            "description": "At least 6 characters and no more than 72 UTF-8 bytes."
+          }
+        }
+      },
+      "EmployeeInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "role": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "nullable": true, "maxLength": 10000 },
+          "photo": { "type": "string", "nullable": true, "description": "HTTP(S) image URL or a local path." },
+          "linkedinUrl": { "type": "string", "format": "uri", "nullable": true }
+        }
+      },
+      "EmployeeUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "role": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "nullable": true, "maxLength": 10000 },
+          "photo": { "type": "string", "nullable": true, "description": "HTTP(S) image URL or a local path." },
+          "linkedinUrl": { "type": "string", "format": "uri", "nullable": true }
+        }
+      },
+      "Employee": {
+        "allOf": [
+          { "$ref": "#/components/schemas/EmployeeInput" },
+          {
+            "type": "object",
+            "required": ["id", "createdAt", "updatedAt"],
+            "properties": {
+              "id": { "type": "string", "format": "uuid" },
+              "createdAt": { "type": "string", "format": "date-time" },
+              "updatedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        ]
+      },
+      "EmployeeResponse": {
+        "type": "object",
+        "properties": { "employee": { "$ref": "#/components/schemas/Employee" } }
+      },
+      "EmployeeList": {
+        "type": "object",
+        "properties": {
+          "employees": { "type": "array", "items": { "$ref": "#/components/schemas/Employee" } }
+        }
+      },
+      "ServiceInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "nullable": true, "maxLength": 10000 },
+          "icon": { "type": "string", "nullable": true, "maxLength": 2048 }
+        }
+      },
+      "ServiceUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "description": { "type": "string", "nullable": true, "maxLength": 10000 },
+          "icon": { "type": "string", "nullable": true, "maxLength": 2048 }
+        }
+      },
+      "Service": {
+        "allOf": [
+          { "$ref": "#/components/schemas/ServiceInput" },
+          {
+            "type": "object",
+            "required": ["id", "createdAt", "updatedAt"],
+            "properties": {
+              "id": { "type": "string", "format": "uuid" },
+              "createdAt": { "type": "string", "format": "date-time" },
+              "updatedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        ]
+      },
+      "ServiceResponse": {
+        "type": "object",
+        "properties": { "service": { "$ref": "#/components/schemas/Service" } }
+      },
+      "ServiceList": {
+        "type": "object",
+        "properties": {
+          "services": { "type": "array", "items": { "$ref": "#/components/schemas/Service" } }
+        }
+      },
+      "WebsiteContentInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["section"],
+        "properties": {
+          "section": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "title": { "type": "string", "nullable": true, "maxLength": 300 },
+          "content": { "type": "string", "nullable": true, "maxLength": 50000 },
+          "imageUrl": { "type": "string", "nullable": true, "description": "HTTP(S) URL or a local path inside /images, such as /images/hero.webp." }
+        }
+      },
+      "WebsiteContentUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "section": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "title": { "type": "string", "nullable": true, "maxLength": 300 },
+          "content": { "type": "string", "nullable": true, "maxLength": 50000 },
+          "imageUrl": { "type": "string", "nullable": true, "description": "HTTP(S) URL or a local path inside /images, such as /images/hero.webp." }
+        }
+      },
+      "WebsiteContent": {
+        "allOf": [
+          { "$ref": "#/components/schemas/WebsiteContentInput" },
+          {
+            "type": "object",
+            "required": ["id", "updatedAt"],
+            "properties": {
+              "id": { "type": "string", "format": "uuid" },
+              "updatedAt": { "type": "string", "format": "date-time" }
+            }
+          }
+        ]
+      },
+      "WebsiteContentResponse": {
+        "type": "object",
+        "properties": { "content": { "$ref": "#/components/schemas/WebsiteContent" } }
+      },
+      "WebsiteContentList": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "array", "items": { "$ref": "#/components/schemas/WebsiteContent" } }
+        }
+      },
+      "MessageResponse": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "maxLength": 254
+          },
+          "password": {
+            "type": "string",
+            "format": "password",
+            "minLength": 6,
+            "maxLength": 72,
+            "description": "At least 6 characters and no more than 72 UTF-8 bytes."
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 40
+          },
+          "role": {
+            "type": "string",
+            "enum": ["CUSTOMER", "ADMIN"],
+            "description": "Administrators only."
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "email", "phone", "role", "createdAt", "updatedAt"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "role": {
+            "type": "string",
+            "enum": ["CUSTOMER", "ADMIN"]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "required": ["user"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "required": ["user", "accessToken", "tokenType", "expiresIn"],
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "accessToken": {
+            "type": "string",
+            "description": "Signed JWT. Send in the Authorization: Bearer header.",
+            "example": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+          },
+          "tokenType": {
+            "type": "string",
+            "enum": ["Bearer"]
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Token lifetime in seconds.",
+            "example": 172800
+          }
+        }
+      },
+      "UserList": {
+        "type": "object",
+        "required": ["users", "page", "pageSize", "total"],
+        "properties": {
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/User"
+            }
+          },
+          "page": {
+            "type": "integer"
+          },
+          "pageSize": {
+            "type": "integer",
+            "example": 50
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
+      "ProjectCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "nullable": true, "maxLength": 20000 },
+          "guestName": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "guestEmail": { "type": "string", "format": "email", "maxLength": 254 },
+          "guestPhone": { "type": "string", "maxLength": 40 }
+        }
+      },
+      "ProjectUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "description": { "type": "string", "nullable": true, "maxLength": 20000 },
+          "status": {
+            "type": "string",
+            "enum": ["DRAFT", "IN_PROGRESS", "ANALYSIS_READY", "COMPLETED", "ARCHIVED"],
+            "description": "Administrator only."
+          }
+        }
+      },
+      "MessageCreateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["content"],
+        "properties": {
+          "content": { "type": "string", "minLength": 1, "maxLength": 12000 },
+          "sender": {
+            "type": "string",
+            "enum": ["USER", "ADMIN"],
+            "description": "Optional. ADMIN is accepted only for authenticated administrators; otherwise the sender defaults to USER."
+          }
+        }
+      },
+      "DocumentExportRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type"],
+        "properties": {
+          "type": { "type": "string", "enum": ["PDF", "DOCX"] },
+          "documentKind": {
+            "type": "string",
+            "enum": ["ANALYSIS", "CAHIER_DES_CHARGES"],
+            "default": "ANALYSIS",
+            "description": "Choose CAHIER_DES_CHARGES to structure the saved analysis as a French project specification."
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

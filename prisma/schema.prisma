@@ -1,0 +1,183 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  ANALYSIS_READY
+  COMPLETED
+  ARCHIVED
+}
+
+enum MessageSender {
+  USER
+  AI
+  ADMIN
+  SYSTEM
+}
+
+model User {
+  id                       String               @id @default(uuid()) @db.Uuid
+  name                     String
+  email                    String               @unique
+  password                 String
+  phone                    String?
+  role                     UserRole             @default(CUSTOMER)
+  sessionVersion           Int                  @default(0)
+  passwordResetRequestedAt DateTime?
+  createdAt                DateTime             @default(now())
+  updatedAt                DateTime             @updatedAt
+  projects                 Project[]
+  passwordResetTokens      PasswordResetToken[]
+  managedEmployees         Employee[]           @relation("EmployeeManager")
+  managedServices          Service[]            @relation("ServiceManager")
+  managedWebsiteContent    WebsiteContent[]     @relation("WebsiteContentManager")
+}
+
+model PasswordResetToken {
+  id           String   @id @default(uuid()) @db.Uuid
+  codeHash     String   @unique @map("tokenHash")
+  attemptsUsed Int      @default(0)
+  userId       String   @db.Uuid
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Project {
+  id            String         @id @default(uuid()) @db.Uuid
+  title         String
+  description   String?
+  status        ProjectStatus  @default(DRAFT)
+  customerId    String?        @db.Uuid
+  guestName     String?
+  guestEmail    String?
+  guestPhone    String?
+  isGuest       Boolean        @default(false)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  customer      User?          @relation(fields: [customerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  conversations Conversation[]
+  aiAnalysis    AIAnalysis?
+  documents     Document[]
+
+  @@index([customerId])
+  @@index([status])
+}
+
+model Conversation {
+  id        String    @id @default(uuid()) @db.Uuid
+  projectId String    @db.Uuid
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  messages  Message[]
+
+  @@index([projectId])
+}
+
+model Message {
+  id             String        @id @default(uuid()) @db.Uuid
+  conversationId String        @db.Uuid
+  sender         MessageSender
+  content        String
+  createdAt      DateTime      @default(now())
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([conversationId])
+}
+
+model AIAnalysis {
+  id                String   @id @default(uuid()) @db.Uuid
+  projectId         String   @unique @db.Uuid
+  summary           String?
+  problem           String?
+  solution          String?
+  targetAudience    String?
+  targetMarket      String?
+  businessModel     String?
+  valueProposition  String?
+  features          String?
+  competitors       String?
+  technology        String?
+  marketingStrategy String?
+  roadmap           String?
+  risks             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model Document {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  type      String
+  fileName  String
+  filePath  String
+  fileSize  Int?
+  createdAt DateTime @default(now())
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([projectId])
+}
+
+model Employee {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  role        String
+  description String?
+  photo       String?
+  linkedinUrl String?
+  managerId   String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  manager     User?    @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([managerId])
+}
+
+model Service {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  description String?
+  icon        String?
+  managerId   String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  manager     User?    @relation("ServiceManager", fields: [managerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([managerId])
+}
+
+model WebsiteContent {
+  id        String   @id @default(uuid()) @db.Uuid
+  section   String   @unique
+  title     String?
+  content   String?
+  imageUrl  String?
+  managerId String?  @db.Uuid
+  updatedAt DateTime @updatedAt
+  manager   User?    @relation("WebsiteContentManager", fields: [managerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([managerId])
+}

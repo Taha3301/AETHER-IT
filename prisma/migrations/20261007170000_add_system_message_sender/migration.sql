@@ -1,0 +1,1 @@
+ALTER TYPE "MessageSender" ADD VALUE 'SYSTEM';

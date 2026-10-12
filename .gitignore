@@ -19,6 +19,8 @@
 
 # production
 /build
+/storage/generated-documents/
+/public/images/61944e28-2ea6-4529-b18d-7a0c1d35f4a3.jpg
 
 # misc
 .DS_Store
