@@ -566,6 +566,47 @@ function ProjectBrowser({
     }
   }
 
+  async function deleteProject() {
+    if (!selected) return;
+    if (
+      !window.confirm(
+        `Supprimer définitivement le projet « ${selected.title} » et toutes ses conversations, analyses et documents ? Le compte client ne sera pas supprimé.`,
+      )
+    ) {
+      return;
+    }
+
+    const projectId = selected.id;
+    setError("");
+    setNotice("");
+    setBusy(true);
+    try {
+      const result = await apiRequest(
+        token,
+        `/api/projects/${encodeURIComponent(projectId)}`,
+        { method: "DELETE" },
+      );
+      if (!result || result.deleted !== true) {
+        throw new Error("Le serveur n’a pas confirmé la suppression du projet.");
+      }
+      setProjects((current) => current.filter((project) => project.id !== projectId));
+      setSelected(null);
+      setSelectedCustomer(null);
+      setMessages({});
+      setNotice(
+        typeof result.warning === "string"
+          ? result.warning
+          : "Le projet et ses données associées ont été supprimés. Le compte client est conservé.",
+      );
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error ? deleteError.message : "Impossible de supprimer le projet.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function sendAdminMessage(
     event: FormEvent<HTMLFormElement>,
     conversationId: string,
@@ -751,6 +792,23 @@ function ProjectBrowser({
                 Enregistrer le projet
               </button>
             </form>
+
+            <section aria-label="Suppression du projet" className="admin-detail-section">
+              <div>
+                <h3>Supprimer le projet</h3>
+                <p className="admin-muted">
+                  Les conversations, analyses et documents seront supprimés. Le compte client restera actif.
+                </p>
+              </div>
+              <button
+                className="admin-danger-button"
+                disabled={busy}
+                onClick={() => void deleteProject()}
+                type="button"
+              >
+                Supprimer définitivement le projet
+              </button>
+            </section>
 
             <div className="admin-detail-section">
               <div className="admin-panel-heading">

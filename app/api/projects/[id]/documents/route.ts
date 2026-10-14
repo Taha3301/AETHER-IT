@@ -56,6 +56,12 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
         id: true,
         title: true,
         aiAnalysis: true,
+        guestName: true,
+        guestEmail: true,
+        guestPhone: true,
+        customer: {
+          select: { name: true, email: true, phone: true },
+        },
       },
     });
     if (!project) return Response.json({ error: "Project not found." }, { status: 404 });
@@ -70,6 +76,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
       project.aiAnalysis,
       parsed.data.type,
       parsed.data.documentKind,
+      {
+        name: project.customer?.name ?? project.guestName ?? null,
+        email: project.customer?.email ?? project.guestEmail ?? null,
+        phone: project.customer?.phone ?? project.guestPhone ?? null,
+      },
     );
     storedFilePath = file.filePath;
     const document = await prisma.document.create({

@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   llm: {
     answerProjectMessage: vi.fn(),
     generateProjectAnalysis: vi.fn(),
+    generateProjectTitle: vi.fn(),
   },
   files: {
     storeProjectAnalysisExport: vi.fn(),
@@ -21,6 +22,7 @@ const mocks = vi.hoisted(() => ({
       findUnique: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     conversation: {
       findMany: vi.fn(),
@@ -54,7 +56,9 @@ vi.mock("@/lib/guest-project", () => ({
 vi.mock("@/lib/llm", () => ({
   answerProjectMessage: mocks.llm.answerProjectMessage,
   generateProjectAnalysis: mocks.llm.generateProjectAnalysis,
+  generateProjectTitle: mocks.llm.generateProjectTitle,
   LlmConfigurationError: class LlmConfigurationError extends Error {},
+  LlmRequestError: class LlmRequestError extends Error {},
 }));
 vi.mock("@/lib/document-export", () => ({
   storeProjectAnalysisExport: mocks.files.storeProjectAnalysisExport,
@@ -64,7 +68,11 @@ vi.mock("@/lib/document-export", () => ({
 vi.mock("@/lib/prisma", () => ({ prisma: mocks.prisma }));
 
 import { GET as listProjects, POST as createProject } from "@/app/api/projects/route";
-import { GET as getProject, PATCH as updateProject } from "@/app/api/projects/[id]/route";
+import {
+  DELETE as deleteProject,
+  GET as getProject,
+  PATCH as updateProject,
+} from "@/app/api/projects/[id]/route";
 import {
   GET as listConversations,
   POST as startConversation,
@@ -148,6 +156,7 @@ beforeEach(() => {
   mocks.guest.verifyGuestProjectToken.mockResolvedValue(projectId);
   mocks.llm.answerProjectMessage.mockResolvedValue("Let's define your target users.");
   mocks.llm.generateProjectAnalysis.mockResolvedValue(analysis);
+  mocks.llm.generateProjectTitle.mockResolvedValue("Local Booking Platform");
   mocks.files.storeProjectAnalysisExport.mockResolvedValue({
     fileName: "Booking-platform-analysis.pdf",
     filePath: "generated-documents/11111111-1111-4111-8111-111111111111.pdf",
@@ -160,6 +169,7 @@ beforeEach(() => {
   mocks.prisma.project.findUnique.mockResolvedValue(projectAccess);
   mocks.prisma.project.create.mockResolvedValue(guestProject);
   mocks.prisma.project.update.mockResolvedValue({ ...guestProject, status: "IN_PROGRESS" });
+  mocks.prisma.project.delete.mockResolvedValue({ id: projectId });
   mocks.prisma.conversation.findMany.mockResolvedValue([]);
   mocks.prisma.conversation.findUnique.mockResolvedValue({
     id: conversationId,
@@ -207,7 +217,88 @@ beforeEach(() => {
   });
 });
 
+describe("project deletion", () => {
+  it("deletes the authorized project and its generated files without deleting the customer", async () => {
+    mocks.prisma.document.findMany.mockResolvedValue([
+      { filePath: "generated-documents/11111111-1111-4111-8111-111111111111.pdf" },
+      { filePath: "generated-documents/22222222-2222-4222-8222-222222222222.docx" },
+    ]);
+
+    const response = await deleteProject(
+      request("DELETE", `/api/projects/${projectId}`),
+      projectContext,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ deleted: true });
+    expect(mocks.prisma.project.delete).toHaveBeenCalledWith({ where: { id: projectId } });
+    expect(mocks.files.removeProjectAnalysisExport).toHaveBeenCalledTimes(2);
+    expect(mocks.files.removeProjectAnalysisExport).toHaveBeenCalledWith(
+      "generated-documents/11111111-1111-4111-8111-111111111111.pdf",
+    );
+  });
+
+  it("does not delete a project when the guest token belongs to another project", async () => {
+    mocks.guest.verifyGuestProjectToken.mockResolvedValue("70000000-0000-4000-8000-000000000007");
+
+    const response = await deleteProject(
+      request("DELETE", `/api/projects/${projectId}`),
+      projectContext,
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.prisma.project.delete).not.toHaveBeenCalled();
+    expect(mocks.prisma.document.findMany).not.toHaveBeenCalled();
+  });
+
+  it("reports generated file cleanup failures after deleting the project", async () => {
+    mocks.prisma.document.findMany.mockResolvedValue([
+      { filePath: "generated-documents/11111111-1111-4111-8111-111111111111.pdf" },
+    ]);
+    mocks.files.removeProjectAnalysisExport.mockRejectedValue(new Error("File unavailable"));
+    const logError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await deleteProject(
+      request("DELETE", `/api/projects/${projectId}`),
+      projectContext,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      deleted: true,
+      warning: "Le projet a été supprimé, mais certains fichiers générés n’ont pas pu être effacés.",
+    });
+    expect(logError).toHaveBeenCalledOnce();
+    expect(mocks.prisma.project.delete).toHaveBeenCalledWith({ where: { id: projectId } });
+    logError.mockRestore();
+  });
+});
+
 describe("project creation and access", () => {
+  it("creates the project with an AI-generated name based on the initial idea", async () => {
+    mocks.auth.getAuthenticatedUser.mockResolvedValue({ id: userId, role: "CUSTOMER" });
+    const idea = "I would like to build an app where people can book local home cleaning services.";
+    const response = await createProject(
+      request(
+        "POST",
+        "/api/projects",
+        { description: idea, language: "en" },
+        "user-token",
+      ),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.llm.generateProjectTitle).toHaveBeenCalledWith(idea, "en");
+    expect(mocks.prisma.project.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          title: "Local Booking Platform",
+          description: idea,
+        }),
+      }),
+    );
+  });
+
   it("creates guest projects with contact metadata and a signed project token", async () => {
     const response = await createProject(
       request("POST", "/api/projects", {
@@ -391,6 +482,27 @@ describe("conversation and analysis workflow", () => {
     expect(mocks.llm.answerProjectMessage).toHaveBeenCalledWith(
       "Booking platform",
       [{ role: "user", content: "Clarify the booking commission." }],
+      "fr",
+    );
+  });
+
+  it("passes the selected response language to the assistant", async () => {
+    mocks.prisma.message.findMany.mockResolvedValue([
+      { id: "selected-language-message", sender: "USER", content: "Bonjour" },
+    ]);
+    const response = await sendMessage(
+      request("POST", `/api/conversations/${conversationId}/messages`, {
+        content: "Bonjour",
+        language: "en",
+      }),
+      conversationContext,
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.llm.answerProjectMessage).toHaveBeenCalledWith(
+      "Booking platform",
+      [{ role: "user", content: "Bonjour" }],
+      "en",
     );
   });
 
@@ -498,6 +610,7 @@ describe("conversation and analysis workflow", () => {
       conversationContext,
     );
     expect(response.status).toBe(200);
+    expect((await response.json()).analysis.summary).toBe(analysis.summary);
     expect(mocks.llm.generateProjectAnalysis).toHaveBeenCalledOnce();
     expect(mocks.prisma.project.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: "COMPLETED" } }),
@@ -559,6 +672,7 @@ describe("private document exports", () => {
       analysis,
       "DOCX",
       "CAHIER_DES_CHARGES",
+      { name: null, email: null, phone: null },
     );
     expect(mocks.prisma.document.create).toHaveBeenCalledWith(
       expect.objectContaining({

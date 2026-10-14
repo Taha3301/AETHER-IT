@@ -94,7 +94,11 @@ export async function POST(request: Request, context: RouteContext): Promise<Res
     }));
 
     try {
-      const content = await answerProjectMessage(conversation.project.title, history);
+      const content = await answerProjectMessage(
+        conversation.project.title,
+        history,
+        parsed.data.language,
+      );
       const aiMessage = await prisma.message.create({
         data: { conversationId: id, sender: MessageSender.AI, content },
       });

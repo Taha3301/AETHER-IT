@@ -5,13 +5,18 @@ const optionalText = (maxLength: number) =>
 
 export const createProjectSchema = z
   .object({
-    title: z.string().trim().min(1).max(200),
+    title: z.string().trim().min(1).max(200).optional(),
     description: optionalText(20000),
     guestName: z.string().trim().min(1).max(120).optional(),
     guestEmail: z.string().trim().email().max(254).transform((value) => value.toLowerCase()).optional(),
     guestPhone: z.string().trim().max(40).optional(),
+    language: z.enum(["fr", "en"]).default("fr"),
   })
-  .strict();
+  .strict()
+  .refine((value) => Boolean(value.title || value.description), {
+    message: "Provide a project idea or a title.",
+    path: ["description"],
+  });
 
 export const updateProjectSchema = z
   .object({
@@ -28,6 +33,7 @@ export const createMessageSchema = z
   .object({
     content: z.string().trim().min(1).max(12000),
     sender: z.enum(["USER", "ADMIN"]).optional(),
+    language: z.enum(["fr", "en"]).default("fr"),
   })
   .strict();
 

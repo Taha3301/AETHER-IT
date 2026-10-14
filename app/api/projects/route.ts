@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { handleApiError, hasSameOrigin } from "@/lib/api";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { createGuestProjectToken, verifyGuestProjectToken } from "@/lib/guest-project";
+import { generateProjectTitle, LlmConfigurationError, LlmRequestError } from "@/lib/llm";
 import { prisma } from "@/lib/prisma";
 import { createProjectSchema } from "@/lib/project-validation";
 
@@ -105,12 +106,19 @@ export async function POST(request: Request): Promise<Response> {
       );
     }
 
+    const projectTitle = parsed.data.description
+      ? await generateProjectTitle(parsed.data.description, parsed.data.language)
+      : parsed.data.title;
+    if (!projectTitle) {
+      return Response.json({ error: "A project idea or title is required." }, { status: 400 });
+    }
+
     const projectId = user ? undefined : randomUUID();
     const guestProjectToken = projectId ? await createGuestProjectToken(projectId) : undefined;
     const project = await prisma.project.create({
       data: {
         ...(projectId ? { id: projectId } : {}),
-        title: parsed.data.title,
+        title: projectTitle,
         description: parsed.data.description ?? null,
         status: ProjectStatus.DRAFT,
         customerId: user?.id ?? null,
@@ -126,6 +134,12 @@ export async function POST(request: Request): Promise<Response> {
       { status: 201 },
     );
   } catch (error) {
+    if (error instanceof LlmConfigurationError) {
+      return Response.json({ error: "AI service is not configured." }, { status: 503 });
+    }
+    if (error instanceof LlmRequestError) {
+      return Response.json({ error: "AI service could not name the project." }, { status: 502 });
+    }
     return handleApiError(error, "Create project");
   }
 }

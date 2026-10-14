@@ -48,6 +48,12 @@ const sections: Array<{ key: keyof ExportableAnalysis; label: string }> = [
 
 export type ExportDocumentKind = "ANALYSIS" | "CAHIER_DES_CHARGES";
 
+export type ExportCustomerDetails = {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+};
+
 const cahierDesChargesSections: Array<{
   label: string;
   values: Array<keyof ExportableAnalysis>;
@@ -80,6 +86,24 @@ function plainText(value: string): string {
   return value.replace(/\u0000/g, "").trim();
 }
 
+function cleanPdfContent(value: string): string {
+  const text = plainText(value);
+  if (!text.startsWith("[")) return text;
+
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (
+      Array.isArray(parsed) &&
+      parsed.every((item): item is string | number => typeof item === "string" || typeof item === "number")
+    ) {
+      return parsed.map((item) => String(item).trim()).filter(Boolean).join(", ");
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+  return text;
+}
+
 export function getExportSections(
   analysis: ExportableAnalysis,
   documentKind: ExportDocumentKind = "ANALYSIS",
@@ -103,6 +127,7 @@ async function createPdf(
   title: string,
   analysis: ExportableAnalysis,
   documentKind: ExportDocumentKind,
+  customer?: ExportCustomerDetails,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const document = new PDFDocument({
@@ -163,6 +188,32 @@ async function createPdf(
         385,
         { width: pageWidth - 156, lineGap: 3 },
       );
+    const customerFields = customer
+      ? [
+          ["Nom", customer.name],
+          ["E-mail", customer.email],
+          ["Téléphone", customer.phone],
+        ].filter((field): field is [string, string] => Boolean(field[1]?.trim()))
+      : [];
+    if (documentKind === "CAHIER_DES_CHARGES" && customerFields.length > 0) {
+      document.roundedRect(58, 470, pageWidth - 116, 116, 8).fill(`#${palette.white}`);
+      document
+        .fillColor(`#${palette.accent}`)
+        .font("Helvetica-Bold")
+        .fontSize(9)
+        .text("INFORMATIONS CLIENT", 78, 488, { characterSpacing: 1 });
+      customerFields.forEach(([label, value], index) => {
+        document
+          .fillColor(`#${palette.body}`)
+          .font("Helvetica")
+          .fontSize(10)
+          .text(`${label} : ${plainText(value)}`, 78, 508 + index * 19, {
+            width: pageWidth - 156,
+            height: 16,
+            ellipsis: true,
+          });
+      });
+    }
     document
       .fillColor(`#${palette.muted}`)
       .font("Helvetica")
@@ -196,13 +247,15 @@ async function createPdf(
         .fillColor(`#${palette.body}`)
         .font("Helvetica")
         .fontSize(10)
-        .text(plainText(section.value), { lineGap: 4, paragraphGap: 3 });
+        .text(cleanPdfContent(section.value), { lineGap: 4, paragraphGap: 3 });
       document.moveDown(1.1);
     }
 
     const pageRange = document.bufferedPageRange();
     for (let index = 1; index < pageRange.count; index += 1) {
       document.switchToPage(index);
+      const bottomMargin = document.page.margins.bottom;
+      document.page.margins.bottom = 0;
       document
         .moveTo(58, 48)
         .lineTo(pageWidth - 58, 48)
@@ -235,6 +288,7 @@ async function createPdf(
         width: pageWidth - 58,
         align: "right",
       });
+      document.page.margins.bottom = bottomMargin;
     }
     document.end();
   });
@@ -459,13 +513,14 @@ export async function storeProjectAnalysisExport(
   analysis: ExportableAnalysis,
   type: "PDF" | "DOCX",
   documentKind: ExportDocumentKind = "ANALYSIS",
+  customer?: ExportCustomerDetails,
 ): Promise<{ fileName: string; filePath: string; fileSize: number }> {
   const extension = type.toLowerCase() as "pdf" | "docx";
   const fileName = safeExportFileName(title, extension, documentKind);
   const storageName = `${randomUUID()}.${extension}`;
   const bytes =
     type === "PDF"
-      ? await createPdf(title, analysis, documentKind)
+      ? await createPdf(title, analysis, documentKind, customer)
       : await createDocx(title, analysis, documentKind);
 
   await mkdir(storageDirectory, { recursive: true });

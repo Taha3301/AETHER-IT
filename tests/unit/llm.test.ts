@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   answerProjectMessage,
   generateProjectAnalysis,
+  generateProjectTitle,
   LlmConfigurationError,
   LlmRequestError,
 } from "@/lib/llm";
@@ -63,9 +64,55 @@ describe("OpenAI-compatible LLM service", () => {
     const requestBody = JSON.parse(requestOptions.body as string) as {
       input: Array<{ role: string; content: string }>;
     };
-    expect(requestBody.input[0].content).toContain(
-      "Reply in the same language as the user's latest message",
+    expect(requestBody.input[0].content).toContain("Reply only in French");
+  });
+
+  it("instructs the assistant to answer in the selected language", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ output_text: "A useful reply.", output: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
     );
+
+    await answerProjectMessage("Booking app", [], "en");
+
+    const requestOptions = vi.mocked(fetch).mock.calls[0]?.[1];
+    if (!requestOptions) throw new Error("Expected AI provider fetch options.");
+    const requestBody = JSON.parse(requestOptions.body as string) as {
+      input: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.input[0].content).toContain("Reply only in English");
+  });
+
+  it("generates a concise project name from the idea in the selected language", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ output_text: '"Plateforme de réservation locale"', output: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      ),
+    );
+
+    await expect(
+      generateProjectTitle("Je veux créer une application de réservation.", "fr"),
+    ).resolves.toBe("Plateforme de réservation locale");
+
+    const requestOptions = vi.mocked(fetch).mock.calls[0]?.[1];
+    if (!requestOptions) throw new Error("Expected AI provider fetch options.");
+    const requestBody = JSON.parse(requestOptions.body as string) as {
+      input: Array<{ role: string; content: string }>;
+    };
+    expect(requestBody.input[0].content).toContain("in French");
+    expect(requestBody.input[1]).toEqual({
+      role: "user",
+      content: "Je veux créer une application de réservation.",
+    });
   });
 
   it("parses and validates structured analysis JSON", async () => {

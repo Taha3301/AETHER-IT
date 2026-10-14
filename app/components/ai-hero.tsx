@@ -3,6 +3,11 @@
 import Image from "next/image";
 import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
 import AIRobot, { type RobotState } from "./ai-robot";
+import {
+  cleanSpeechText,
+  replacePendingWithReply,
+  type ChatLanguage,
+} from "@/lib/chat-text";
 
 type ChatMessage = {
   id: string;
@@ -24,31 +29,424 @@ type SavedChat = {
   projectId: string;
   conversationId: string;
   guestToken: string | null;
+  finished?: boolean;
 };
+
+type ProjectAnalysis = {
+  summary: string;
+  problem: string;
+  solution: string;
+  targetAudience: string;
+  targetMarket: string;
+  businessModel: string;
+  valueProposition: string;
+  features: string;
+  competitors: string;
+  technology: string;
+  marketingStrategy: string;
+  roadmap: string;
+  risks: string;
+};
+
+const analysisFieldOrder: Array<keyof ProjectAnalysis> = [
+  "problem",
+  "solution",
+  "targetAudience",
+  "targetMarket",
+  "businessModel",
+  "valueProposition",
+  "features",
+  "competitors",
+  "technology",
+  "marketingStrategy",
+  "roadmap",
+  "risks",
+];
 
 type JsonObject = Record<string, unknown>;
 
 const savedChatKey = "aether.activeConversation";
+const languageStorageKey = "aether.chatLanguage";
+
+const interfaceText: Record<
+  ChatLanguage,
+  {
+    modelTag: string;
+    language: string;
+    voiceEnabled: string;
+    voiceDisabled: string;
+    enableVoice: string;
+    disableVoice: string;
+    newChat: string;
+    newChatLabel: string;
+    welcomeKicker: string;
+    welcomeTitle: string;
+    welcomeDescription: string;
+    suggestions: Array<{ icon: string; title: string; prompt: string; desc: string }>;
+    readyPromptsLabel: string;
+    readyPromptsHint: string;
+    readyPrompts: Array<{ label: string; prompt: string }>;
+    robotTitle: string;
+    robotSubtitle: string;
+    speaking: string;
+    thinking: string;
+    listening: string;
+    copy: string;
+    copyLabel: string;
+    copied: string;
+    listen: string;
+    thinkingMessage: string;
+    guestDetails: string;
+    firstName: string;
+    email: string;
+    sendPlaceholder: string;
+    send: string;
+    disclaimer: string;
+    restoreError: string;
+    guestRequired: string;
+    createProjectError: string;
+    projectAccessError: string;
+    conversationError: string;
+    messageError: string;
+    messageSavedAiError: string;
+    messageSendError: string;
+    previousMessagesError: string;
+    invalidReply: string;
+    genericError: string;
+    finishConversation: string;
+    finishingConversation: string;
+    finishSuccess: string;
+    finishError: string;
+    finishUnavailable: string;
+    analysisTitle: string;
+    analysisSummary: string;
+    analysisDetails: string;
+    analysisLabels: Record<keyof ProjectAnalysis, string>;
+    unreadableResponse: string;
+    unexpectedResponse: string;
+    selectLanguage: string;
+  }
+> = {
+  fr: {
+    modelTag: "Assistant IT",
+    language: "Langue",
+    voiceEnabled: "Voix activée",
+    voiceDisabled: "Voix désactivée",
+    enableVoice: "Activer la voix IA",
+    disableVoice: "Désactiver la voix IA",
+    newChat: "Nouvelle conversation",
+    newChatLabel: "Nouveau chat",
+    welcomeKicker: "VOTRE PARTENAIRE D’INGÉNIERIE NUMÉRIQUE",
+    welcomeTitle: "Parlez-moi de votre vision.",
+    welcomeDescription:
+      "Partagez votre idée, une intuition ou un besoin technique. Explorons-le ensemble et façonnons la solution idéale étape par étape.",
+    suggestions: [
+      {
+        icon: "💡",
+        title: "Concevoir un SaaS IA sur mesure",
+        prompt:
+          "Bonjour Aether, je souhaite concevoir une plateforme SaaS moderne avec intégration d’intelligence artificielle et architecture cloud évolutive.",
+        desc: "Architecture cloud évolutive, modèle LLM dédié et interface réactive.",
+      },
+      {
+        icon: "⚡",
+        title: "Auditer notre infrastructure cloud",
+        prompt:
+          "Bonjour Aether, nous souhaitons réaliser un audit de notre infrastructure cloud pour optimiser les performances, la sécurité et réduire les coûts.",
+        desc: "Audit de sécurité, conteneurisation et haute disponibilité.",
+      },
+      {
+        icon: "📱",
+        title: "Développer une application mobile",
+        prompt:
+          "Bonjour Aether, nous avons un projet d'application mobile pour iOS et Android avec synchronisation en temps réel et API sécurisée.",
+        desc: "Expérience fluide, fonctionnement hors ligne et intégration d’API.",
+      },
+      {
+        icon: "🤖",
+        title: "Intégrer un agent IA métier",
+        prompt:
+          "Bonjour Aether, nous voulons déployer un agent conversationnel IA autonome connecté à nos bases de connaissances internes.",
+        desc: "Agent intelligent connecté à vos données d’entreprise.",
+      },
+    ],
+    readyPromptsLabel: "Besoin d’aide pour formuler votre message ?",
+    readyPromptsHint: "Choisissez un modèle, complétez les éléments entre crochets, puis envoyez-le.",
+    readyPrompts: [
+      {
+        label: "Décrire mon idée",
+        prompt:
+          "Je souhaite créer [type d’application ou de service] pour [public visé]. L’objectif principal est de [objectif].",
+      },
+      {
+        label: "Expliquer le problème à résoudre",
+        prompt:
+          "Le problème que je souhaite résoudre est [problème]. Aujourd’hui, [expliquez comment les personnes concernées font face à ce problème].",
+      },
+      {
+        label: "Présenter les futurs utilisateurs",
+        prompt:
+          "Les personnes qui utiliseront mon projet sont [public visé]. Elles ont surtout besoin de [besoin principal].",
+      },
+      {
+        label: "Lister les fonctionnalités",
+        prompt:
+          "Voici les fonctionnalités que j’imagine : [fonctionnalités]. Aidez-moi à identifier et prioriser les plus importantes.",
+      },
+      {
+        label: "Préciser mon budget et mes délais",
+        prompt:
+          "Je souhaite lancer ce projet vers [date ou délai] et mon budget approximatif est de [budget]. Quelles options seraient réalistes ?",
+      },
+      {
+        label: "Être guidé pas à pas",
+        prompt:
+          "Je n’ai pas encore tous les détails de mon projet. Aidez-moi à clarifier mon idée en me posant des questions simples, une à la fois.",
+      },
+      {
+        label: "Posez-moi les questions utiles",
+        prompt:
+          "Posez-moi toutes les questions nécessaires pour bien comprendre mon idée et mes besoins. Je vous répondrai au fur et à mesure. Commencez par la question la plus importante et posez-les une par une.",
+      },
+    ],
+    robotTitle: "COMPAGNON INTELLIGENT",
+    robotSubtitle: "Architecture et développement",
+    speaking: "Aether vous répond…",
+    thinking: "Réflexion en cours…",
+    listening: "À votre écoute",
+    copy: "Copier",
+    copyLabel: "Copier le texte",
+    copied: "Copié !",
+    listen: "Écouter",
+    thinkingMessage: "Aether réfléchit à votre projet",
+    guestDetails: "Pour enregistrer votre projet et débuter l’échange :",
+    firstName: "Votre prénom",
+    email: "Votre adresse e-mail",
+    sendPlaceholder:
+      "Envoyez un message à Aether IT… (Entrée pour envoyer, Maj+Entrée pour un saut de ligne)",
+    send: "Envoyer votre message",
+    disclaimer: "Aether IT peut faire des erreurs. Vos données et projets restent strictement confidentiels.",
+    restoreError: "La conversation précédente n’a pas pu être chargée. Vous pouvez recommencer.",
+    guestRequired: "Pour enregistrer votre projet, veuillez indiquer votre prénom et votre adresse e-mail.",
+    createProjectError: "Impossible de créer votre projet. Vérifiez vos informations et réessayez.",
+    projectAccessError: "Le projet a été créé, mais son accès sécurisé n’a pas été renvoyé.",
+    conversationError: "Votre projet est enregistré, mais la conversation n’a pas pu démarrer.",
+    messageError: "Impossible de retrouver l’accès à cette conversation. Rechargez la page.",
+    messageSavedAiError:
+      "Votre message est enregistré, mais l’assistant ne peut pas répondre pour le moment. Réessayez dans un instant.",
+    messageSendError: "Votre message n’a pas pu être envoyé. Vérifiez votre connexion et réessayez.",
+    previousMessagesError: "Les messages précédents n’ont pas pu être chargés.",
+    invalidReply: "L’assistant n’a pas renvoyé de réponse valide. Réessayez.",
+    genericError: "Une erreur est survenue. Veuillez réessayer.",
+    finishConversation: "Terminer la conversation et créer l’analyse",
+    finishingConversation: "Création de l’analyse…",
+    finishSuccess: "Votre analyse de projet est prête.",
+    finishError: "Impossible de terminer la conversation et de créer l’analyse. Réessayez.",
+    finishUnavailable: "La conversation n’a pas pu être retrouvée. Rechargez la page.",
+    analysisTitle: "Analyse de votre projet",
+    analysisSummary: "Résumé",
+    analysisDetails: "Consulter l’analyse complète",
+    analysisLabels: {
+      summary: "Résumé",
+      problem: "Problématique",
+      solution: "Solution proposée",
+      targetAudience: "Public cible",
+      targetMarket: "Marché cible",
+      businessModel: "Modèle économique",
+      valueProposition: "Proposition de valeur",
+      features: "Fonctionnalités",
+      competitors: "Concurrence",
+      technology: "Technologies",
+      marketingStrategy: "Stratégie marketing",
+      roadmap: "Feuille de route",
+      risks: "Risques",
+    },
+    unreadableResponse: "Le service a renvoyé une réponse illisible. Réessayez.",
+    unexpectedResponse: "Le service a renvoyé une réponse inattendue. Réessayez.",
+    selectLanguage: "Choisir la langue de l’interface et des réponses de l’assistant",
+  },
+  en: {
+    modelTag: "IT Assistant",
+    language: "Language",
+    voiceEnabled: "Voice on",
+    voiceDisabled: "Voice off",
+    enableVoice: "Enable AI voice",
+    disableVoice: "Disable AI voice",
+    newChat: "New conversation",
+    newChatLabel: "New chat",
+    welcomeKicker: "YOUR DIGITAL ENGINEERING PARTNER",
+    welcomeTitle: "Tell me about your vision.",
+    welcomeDescription:
+      "Share an idea, an intuition, or a technical need. Let’s explore it together and shape the right solution step by step.",
+    suggestions: [
+      {
+        icon: "💡",
+        title: "Design a custom AI SaaS",
+        prompt:
+          "Hello Aether, I would like to design a modern SaaS platform with artificial intelligence integration and a scalable cloud architecture.",
+        desc: "Scalable cloud architecture, a dedicated LLM, and a responsive interface.",
+      },
+      {
+        icon: "⚡",
+        title: "Audit our cloud infrastructure",
+        prompt:
+          "Hello Aether, we would like to audit our cloud infrastructure to improve performance and security while reducing costs.",
+        desc: "Security audit, containerization, and high availability.",
+      },
+      {
+        icon: "📱",
+        title: "Build a mobile application",
+        prompt:
+          "Hello Aether, we are planning an iOS and Android mobile app with real-time synchronization and a secure API.",
+        desc: "Smooth experience, offline support, and API integration.",
+      },
+      {
+        icon: "🤖",
+        title: "Integrate a business AI agent",
+        prompt:
+          "Hello Aether, we want to deploy an autonomous conversational AI agent connected to our internal knowledge bases.",
+        desc: "An intelligent agent connected to your business data.",
+      },
+    ],
+    readyPromptsLabel: "Not sure what to say?",
+    readyPromptsHint: "Choose a template, fill in the brackets, then send your message.",
+    readyPrompts: [
+      {
+        label: "Describe my idea",
+        prompt:
+          "I want to create a [type of app or service] for [target users]. Its main goal is to [goal].",
+      },
+      {
+        label: "Explain the problem to solve",
+        prompt:
+          "The problem I want to solve is [problem]. Right now, [explain how the people affected deal with it].",
+      },
+      {
+        label: "Describe the intended users",
+        prompt:
+          "The people who will use my project are [target users]. Their main need is [main need].",
+      },
+      {
+        label: "List possible features",
+        prompt:
+          "Here are the features I have in mind: [features]. Help me identify and prioritize the most important ones.",
+      },
+      {
+        label: "Share my budget and timeline",
+        prompt:
+          "I would like to launch this project around [date or timeline], and my approximate budget is [budget]. What would be realistic?",
+      },
+      {
+        label: "Guide me step by step",
+        prompt:
+          "I do not have all the details of my project yet. Help me clarify the idea by asking simple questions, one at a time.",
+      },
+      {
+        label: "Ask me what you need to know",
+        prompt:
+          "Ask me anything you need to understand my idea and requirements. I will answer as we go. Start with the most important question and ask them one at a time.",
+      },
+    ],
+    robotTitle: "INTELLIGENT COMPANION",
+    robotSubtitle: "Architecture and development",
+    speaking: "Aether is responding…",
+    thinking: "Thinking…",
+    listening: "Ready to listen",
+    copy: "Copy",
+    copyLabel: "Copy text",
+    copied: "Copied!",
+    listen: "Listen",
+    thinkingMessage: "Aether is thinking about your project",
+    guestDetails: "Enter your details to save your project and start chatting:",
+    firstName: "Your first name",
+    email: "Your email address",
+    sendPlaceholder:
+      "Send a message to Aether IT… (Enter to send, Shift+Enter for a new line)",
+    send: "Send your message",
+    disclaimer: "Aether IT can make mistakes. Your data and projects remain strictly confidential.",
+    restoreError: "The previous conversation could not be loaded. You can start a new one.",
+    guestRequired: "Enter your first name and email address to save your project.",
+    createProjectError: "Could not create your project. Check your details and try again.",
+    projectAccessError: "The project was created, but secure access details were not returned.",
+    conversationError: "Your project was saved, but the conversation could not be started.",
+    messageError: "Could not restore access to this conversation. Reload the page.",
+    messageSavedAiError:
+      "Your message was saved, but the assistant cannot reply right now. Please try again shortly.",
+    messageSendError: "Your message could not be sent. Check your connection and try again.",
+    previousMessagesError: "Previous messages could not be loaded.",
+    invalidReply: "The assistant did not return a valid response. Please try again.",
+    genericError: "Something went wrong. Please try again.",
+    finishConversation: "End conversation and create analysis",
+    finishingConversation: "Creating your analysis…",
+    finishSuccess: "Your project analysis is ready.",
+    finishError: "Could not finish the conversation and create the analysis. Please try again.",
+    finishUnavailable: "Could not find the conversation. Reload the page.",
+    analysisTitle: "Your project analysis",
+    analysisSummary: "Summary",
+    analysisDetails: "View full analysis",
+    analysisLabels: {
+      summary: "Summary",
+      problem: "Problem",
+      solution: "Proposed solution",
+      targetAudience: "Target audience",
+      targetMarket: "Target market",
+      businessModel: "Business model",
+      valueProposition: "Value proposition",
+      features: "Features",
+      competitors: "Competitors",
+      technology: "Technology",
+      marketingStrategy: "Marketing strategy",
+      roadmap: "Roadmap",
+      risks: "Risks",
+    },
+    unreadableResponse: "The service returned an unreadable response. Please try again.",
+    unexpectedResponse: "The service returned an unexpected response. Please try again.",
+    selectLanguage: "Choose the language for the interface and assistant replies",
+  },
+};
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null;
 }
 
-async function readJson(response: Response): Promise<JsonObject> {
+async function readJson(
+  response: Response,
+  language: ChatLanguage = "fr",
+): Promise<JsonObject> {
+  const text = interfaceText[language];
   let result: unknown;
   try {
     result = await response.json();
   } catch {
-    throw new Error("Le service a renvoyé une réponse illisible. Réessayez.");
+    throw new Error(text.unreadableResponse);
   }
   if (!isObject(result)) {
-    throw new Error("Le service a renvoyé une réponse inattendue. Réessayez.");
+    throw new Error(text.unexpectedResponse);
   }
   return result;
 }
 
 function isProject(value: unknown): value is Project {
   return isObject(value) && typeof value.id === "string";
+}
+
+function isProjectAnalysis(value: unknown): value is ProjectAnalysis {
+  const fields: Array<keyof ProjectAnalysis> = [
+    "summary",
+    "problem",
+    "solution",
+    "targetAudience",
+    "targetMarket",
+    "businessModel",
+    "valueProposition",
+    "features",
+    "competitors",
+    "technology",
+    "marketingStrategy",
+    "roadmap",
+    "risks",
+  ];
+  return isObject(value) && fields.every((field) => typeof value[field] === "string");
 }
 
 function isApiMessage(value: unknown): value is ApiMessage {
@@ -65,45 +463,18 @@ function isSavedChat(value: unknown): value is SavedChat {
     isObject(value) &&
     typeof value.projectId === "string" &&
     typeof value.conversationId === "string" &&
-    (value.guestToken === null || typeof value.guestToken === "string")
+    (value.guestToken === null || typeof value.guestToken === "string") &&
+    (value.finished === undefined || typeof value.finished === "boolean")
   );
 }
-
-const PROMPT_SUGGESTIONS = [
-  {
-    icon: "💡",
-    title: "Concevoir un SaaS IA sur mesure",
-    prompt:
-      "Bonjour Aether, je souhaite concevoir une plateforme SaaS moderne avec intégration d’intelligence artificielle et architecture cloud évolutive.",
-    desc: "Architecture cloud scalable, modèle LLM dédié et interface réactive.",
-  },
-  {
-    icon: "⚡",
-    title: "Auditer notre infrastructure Cloud",
-    prompt:
-      "Bonjour Aether, nous souhaitons réaliser un audit de notre infrastructure cloud pour optimiser les performances, la sécurité et réduire les coûts.",
-    desc: "Audit de sécurité, conteneurisation et haute disponibilité.",
-  },
-  {
-    icon: "📱",
-    title: "Développer une application Mobile",
-    prompt:
-      "Bonjour Aether, nous avons un projet d'application mobile pour iOS et Android avec synchronisation temps réel et API sécurisée.",
-    desc: "Expérience native fluide, offline-first et intégration d'APIs.",
-  },
-  {
-    icon: "🤖",
-    title: "Intégrer un Agent IA métier",
-    prompt:
-      "Bonjour Aether, nous voulons déployer un agent conversationnel IA autonome connecté à nos bases de connaissances internes.",
-    desc: "Agent intelligent autonome branché sur vos données d’entreprise.",
-  },
-];
 
 export default function AiHero() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [displayedMessages, setDisplayedMessages] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const [conversationFinished, setConversationFinished] = useState(false);
+  const [projectAnalysis, setProjectAnalysis] = useState<ProjectAnalysis | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
   const [formError, setFormError] = useState("");
   const [projectReady, setProjectReady] = useState(false);
@@ -112,18 +483,25 @@ export default function AiHero() {
   const [inputValue, setInputValue] = useState("");
   const [guestName, setGuestName] = useState("");
   const [guestEmail, setGuestEmail] = useState("");
+  const [language, setLanguage] = useState<ChatLanguage>("fr");
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const pendingMessageSequenceRef = useRef(0);
   const speechCancelRef = useRef<(() => void) | null>(null);
   const speechTimerRef = useRef<number | null>(null);
+  const ui = interfaceText[language];
 
   // Restore session
   useEffect(() => {
     async function restoreSession() {
+      const savedLanguage = window.localStorage.getItem(languageStorageKey);
+      const selectedLanguage: ChatLanguage = savedLanguage === "en" ? "en" : "fr";
+      setLanguage(selectedLanguage);
+      window.document.documentElement.lang = selectedLanguage;
       const accessToken = window.sessionStorage.getItem("aether.accessToken");
       setIsSignedIn(Boolean(accessToken));
 
@@ -157,9 +535,22 @@ export default function AiHero() {
 
       const headers = { Authorization: `Bearer ${token}` };
       const savedChat = savedChatJson;
+      setConversationFinished(savedChat.finished === true);
       if (!savedChat.conversationId) {
         setProjectReady(true);
         setRobotState("listening");
+        if (savedChat.finished) {
+          const analysisResponse = await fetch(
+            `/api/projects/${encodeURIComponent(savedChat.projectId)}/analysis`,
+            { headers },
+          );
+          if (analysisResponse.ok) {
+            const analysisResult = await readJson(analysisResponse, selectedLanguage);
+            if (isProjectAnalysis(analysisResult.analysis)) {
+              setProjectAnalysis(analysisResult.analysis);
+            }
+          }
+        }
         setIsRestoring(false);
         return;
       }
@@ -175,9 +566,9 @@ export default function AiHero() {
               window.sessionStorage.removeItem(savedChatKey);
               return;
             }
-            throw new Error("Les messages précédents n’ont pas pu être chargés.");
+            throw new Error(interfaceText[selectedLanguage].previousMessagesError);
           }
-          const result = await readJson(response);
+          const result = await readJson(response, selectedLanguage);
           const loadedMessages = Array.isArray(result.messages)
             ? result.messages.filter(isApiMessage)
             : [];
@@ -194,8 +585,22 @@ export default function AiHero() {
           setDisplayedMessages(dispMap);
           setProjectReady(true);
           setRobotState("listening");
+          if (savedChat.finished) {
+            const analysisResponse = await fetch(
+              `/api/projects/${encodeURIComponent(savedChat.projectId)}/analysis`,
+              { headers },
+            );
+            if (!analysisResponse.ok) {
+              throw new Error(interfaceText[selectedLanguage].restoreError);
+            }
+            const analysisResult = await readJson(analysisResponse, selectedLanguage);
+            if (!isProjectAnalysis(analysisResult.analysis)) {
+              throw new Error(interfaceText[selectedLanguage].restoreError);
+            }
+            setProjectAnalysis(analysisResult.analysis);
+          }
         } catch {
-          setFormError("La conversation précédente n’a pas pu être chargée. Vous pouvez recommencer.");
+          setFormError(interfaceText[selectedLanguage].restoreError);
         } finally {
           setIsRestoring(false);
         }
@@ -215,7 +620,7 @@ export default function AiHero() {
         behavior: "smooth",
       });
     }
-  }, [messages, displayedMessages, isSending]);
+  }, [messages, displayedMessages, isSending, projectAnalysis]);
 
   // Clean speech synthesis on unmount
   useEffect(() => {
@@ -238,6 +643,7 @@ export default function AiHero() {
 
   // Speech synthesis runner
   function triggerSpeech(text: string) {
+    const spokenText = cleanSpeechText(text);
     if (speechCancelRef.current) {
       speechCancelRef.current();
       speechCancelRef.current = null;
@@ -247,9 +653,14 @@ export default function AiHero() {
       speechTimerRef.current = null;
     }
 
+    if (!spokenText) {
+      setRobotState("listening");
+      return;
+    }
+
     if (!voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) {
       setRobotState("talking");
-      const duration = Math.max(3200, Math.min(9500, text.length * 52));
+      const duration = Math.max(3200, Math.min(9500, spokenText.length * 52));
       speechTimerRef.current = window.setTimeout(() => {
         setRobotState("listening");
         speechTimerRef.current = null;
@@ -259,14 +670,17 @@ export default function AiHero() {
 
     try {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "fr-FR";
+      const utterance = new SpeechSynthesisUtterance(spokenText);
+      utterance.lang = language === "en" ? "en-US" : "fr-FR";
       utterance.rate = 1.04;
       utterance.pitch = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
-      const frenchVoice = voices.find((v) => v.lang.startsWith("fr") || v.lang === "fr-FR");
-      if (frenchVoice) utterance.voice = frenchVoice;
+      const voiceLanguage = language === "en" ? "en" : "fr";
+      const matchingVoice = voices.find((voice) =>
+        voice.lang.toLowerCase().startsWith(voiceLanguage),
+      );
+      if (matchingVoice) utterance.voice = matchingVoice;
 
       utterance.onstart = () => {
         setRobotState("talking");
@@ -311,10 +725,10 @@ export default function AiHero() {
   // Handle message submission
   async function sendMessage(contentToSend: string) {
     const trimmed = contentToSend.trim();
-    if (!trimmed || isSending) return;
+    if (!trimmed || isSending || isFinishing || conversationFinished) return;
 
     if (!isSignedIn && !projectReady && (!guestName.trim() || !guestEmail.trim())) {
-      setFormError("Pour enregistrer votre projet et débuter l'échange, veuillez indiquer votre prénom et e-mail ci-dessous.");
+      setFormError(ui.guestRequired);
       return;
     }
 
@@ -323,7 +737,7 @@ export default function AiHero() {
     setRobotState("thinking");
     setInputValue("");
 
-    const pendingMessageId = `pending-${Date.now()}`;
+    const pendingMessageId = `pending-${++pendingMessageSequenceRef.current}`;
     let userMessageSaved = false;
 
     setMessages((current) => [
@@ -358,14 +772,14 @@ export default function AiHero() {
             ...(authorizationToken ? { Authorization: `Bearer ${authorizationToken}` } : {}),
           },
           body: JSON.stringify({
-            title: trimmed.slice(0, 200),
             description: trimmed,
+            language,
             ...(!accountToken ? { guestName: guestName.trim(), guestEmail: guestEmail.trim() } : {}),
           }),
         });
-        const projectResult = await readJson(projectResponse);
+        const projectResult = await readJson(projectResponse, language);
         if (!projectResponse.ok || !isProject(projectResult.project)) {
-          throw new Error("Impossible de créer votre projet. Vérifiez vos informations et réessayez.");
+          throw new Error(ui.createProjectError);
         }
         projectId = projectResult.project.id;
         if (!accountToken && typeof projectResult.guestProjectToken === "string") {
@@ -373,7 +787,7 @@ export default function AiHero() {
           authorizationToken = guestToken;
         }
         if (!authorizationToken) {
-          throw new Error("Le projet a été créé, mais son accès sécurisé n’a pas été renvoyé.");
+          throw new Error(ui.projectAccessError);
         }
 
         savedChat = { projectId, conversationId: "", guestToken };
@@ -388,13 +802,13 @@ export default function AiHero() {
             headers: { Authorization: `Bearer ${authorizationToken}` },
           },
         );
-        const conversationResult = await readJson(conversationResponse);
+        const conversationResult = await readJson(conversationResponse, language);
         if (
           !conversationResponse.ok ||
           !isObject(conversationResult.conversation) ||
           typeof conversationResult.conversation.id !== "string"
         ) {
-          throw new Error("Votre projet est enregistré, mais la conversation n’a pas pu démarrer.");
+          throw new Error(ui.conversationError);
         }
         conversationId = conversationResult.conversation.id;
         savedChat = { projectId, conversationId, guestToken };
@@ -403,7 +817,7 @@ export default function AiHero() {
       }
 
       if (!authorizationToken || !conversationId) {
-        throw new Error("Impossible de retrouver l’accès à cette conversation. Rechargez la page.");
+        throw new Error(ui.messageError);
       }
 
       const messageResponse = await fetch(
@@ -414,10 +828,10 @@ export default function AiHero() {
             Authorization: `Bearer ${authorizationToken}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ content: trimmed }),
+          body: JSON.stringify({ content: trimmed, language }),
         },
       );
-      const messageResult = await readJson(messageResponse);
+      const messageResult = await readJson(messageResponse, language);
 
       const returnedUserMessage = isApiMessage(messageResult.userMessage)
         ? { ...messageResult.userMessage, sender: "USER" as const }
@@ -439,23 +853,24 @@ export default function AiHero() {
       if (!messageResponse.ok) {
         throw new Error(
           messageResponse.status === 502 || messageResponse.status === 503
-            ? "Votre message est enregistré, mais l’assistant ne peut pas répondre pour le moment. Réessayez dans un instant."
-            : "Votre message n’a pas pu être envoyé. Vérifiez votre connexion et réessayez.",
+            ? ui.messageSavedAiError
+            : ui.messageSendError,
         );
       }
 
       if (!isApiMessage(messageResult.aiMessage)) {
-        throw new Error("L’assistant n’a pas renvoyé de réponse valide. Réessayez.");
+        throw new Error(ui.invalidReply);
       }
 
       const aiMessage = messageResult.aiMessage;
 
       // Update messages list
-      setMessages((current) => [
-        ...current.filter((message) => message.id !== pendingMessageId),
-        ...(returnedUserMessage ? [returnedUserMessage] : []),
-        { ...aiMessage, sender: "AI" },
-      ]);
+      setMessages((current) =>
+        replacePendingWithReply(current, pendingMessageId, returnedUserMessage, {
+          ...aiMessage,
+          sender: "AI",
+        }),
+      );
 
       // Trigger progressive streaming text and mouth speaking animation
       streamAiMessage(aiMessage.id, aiMessage.content);
@@ -465,12 +880,63 @@ export default function AiHero() {
         setMessages((current) => current.filter((message) => message.id !== pendingMessageId));
       }
       setFormError(
-        error instanceof Error ? error.message : "Une erreur inattendue est survenue. Réessayez.",
+        error instanceof Error && !(error instanceof TypeError) ? error.message : ui.genericError,
       );
       setRobotState("listening");
     } finally {
       setIsSending(false);
       window.setTimeout(() => textareaRef.current?.focus(), 100);
+    }
+  }
+
+  async function finishConversation() {
+    if (isSending || isFinishing || conversationFinished) return;
+    setFormError("");
+
+    let savedChat: SavedChat | null = null;
+    try {
+      const savedChatValue = window.sessionStorage.getItem(savedChatKey);
+      if (savedChatValue) {
+        const parsed: unknown = JSON.parse(savedChatValue);
+        if (isSavedChat(parsed)) savedChat = parsed;
+      }
+    } catch {
+      setFormError(ui.finishUnavailable);
+      return;
+    }
+
+    const token =
+      savedChat?.guestToken ?? window.sessionStorage.getItem("aether.accessToken");
+    if (!savedChat?.conversationId || !token) {
+      setFormError(ui.finishUnavailable);
+      return;
+    }
+
+    setIsFinishing(true);
+    setRobotState("thinking");
+    try {
+      const response = await fetch(
+        `/api/conversations/${encodeURIComponent(savedChat.conversationId)}/finish`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      const result = await readJson(response, language);
+      if (!response.ok || !isProjectAnalysis(result.analysis)) {
+        throw new Error(ui.finishError);
+      }
+
+      const finishedChat = { ...savedChat, finished: true };
+      window.sessionStorage.setItem(savedChatKey, JSON.stringify(finishedChat));
+      setConversationFinished(true);
+      setProjectAnalysis(result.analysis);
+      setRobotState("listening");
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : ui.finishError);
+      setRobotState("listening");
+    } finally {
+      setIsFinishing(false);
     }
   }
 
@@ -500,6 +966,8 @@ export default function AiHero() {
     setMessages([]);
     setDisplayedMessages({});
     setProjectReady(false);
+    setConversationFinished(false);
+    setProjectAnalysis(null);
     setFormError("");
     setRobotState("idle");
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -511,7 +979,7 @@ export default function AiHero() {
 
   return (
     <section
-      aria-label="Interface conversationnelle Aether IT"
+      aria-label={language === "fr" ? "Interface conversationnelle Aether IT" : "Aether IT chat interface"}
       className={`ai-hero chatgpt-mode${hasMessages ? " chatgpt-has-messages" : ""}${isSending ? " ai-hero-thinking" : ""}`}
       id="approche"
     >
@@ -532,12 +1000,30 @@ export default function AiHero() {
           <div className="chatgpt-model-badge">
             <span className="model-dot" />
             <span className="model-name">Aether 4.0 Omni</span>
-            <span className="model-tag">Assistant IT</span>
+            <span className="model-tag">{ui.modelTag}</span>
           </div>
 
           <div className="chatgpt-top-actions">
+            <label className="chatgpt-icon-btn" htmlFor="chat-language">
+              <span className="btn-label">{ui.language}</span>
+              <select
+                aria-label={ui.selectLanguage}
+                className="chat-language-select"
+                id="chat-language"
+                onChange={(event) => {
+                  const nextLanguage = event.target.value as ChatLanguage;
+                  setLanguage(nextLanguage);
+                  window.localStorage.setItem(languageStorageKey, nextLanguage);
+                  window.document.documentElement.lang = nextLanguage;
+                }}
+                value={language}
+              >
+                <option value="fr">Français</option>
+                <option value="en">English</option>
+              </select>
+            </label>
             <button
-              aria-label={voiceEnabled ? "Désactiver la voix IA" : "Activer la voix IA"}
+              aria-label={voiceEnabled ? ui.disableVoice : ui.enableVoice}
               className={`chatgpt-icon-btn${voiceEnabled ? " active" : ""}`}
               onClick={() => {
                 const next = !voiceEnabled;
@@ -546,7 +1032,7 @@ export default function AiHero() {
                   window.speechSynthesis.cancel();
                 }
               }}
-              title={voiceEnabled ? "Voix IA activée" : "Voix IA désactivée"}
+              title={voiceEnabled ? ui.disableVoice : ui.enableVoice}
               type="button"
             >
               <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
@@ -568,15 +1054,15 @@ export default function AiHero() {
                   />
                 )}
               </svg>
-              <span className="btn-label">{voiceEnabled ? "Voix ON" : "Voix OFF"}</span>
+              <span className="btn-label">{voiceEnabled ? ui.voiceEnabled : ui.voiceDisabled}</span>
             </button>
 
             {hasMessages && (
               <button
-                aria-label="Nouvelle conversation"
+                aria-label={ui.newChat}
                 className="chatgpt-icon-btn"
                 onClick={handleResetChat}
-                title="Nouvelle conversation"
+                title={ui.newChat}
                 type="button"
               >
                 <svg aria-hidden="true" fill="none" viewBox="0 0 24 24">
@@ -588,7 +1074,7 @@ export default function AiHero() {
                     strokeWidth="1.8"
                   />
                 </svg>
-                <span className="btn-label">Nouveau chat</span>
+                <span className="btn-label">{ui.newChatLabel}</span>
               </button>
             )}
           </div>
@@ -608,24 +1094,21 @@ export default function AiHero() {
                   <span className="nameplate-mark">a</span>
                   <span className="nameplate-copy">
                     <strong>AETHER</strong>
-                    <span>COMPAGNON INTELLIGENT</span>
+                    <span>{ui.robotTitle}</span>
                   </span>
                   <span className={`nameplate-status${robotState === "talking" ? " speaking" : ""}`} />
                 </div>
               </div>
 
               <div className="welcome-titles">
-                <span className="welcome-kicker">✦ VOTRE PARTENAIRE D’INGÉNIERIE NUMÉRIQUE</span>
-                <h1>Parlez-moi de votre vision.</h1>
-                <p>
-                  Partagez votre idée, une intuition ou un besoin technique. Explorons-le ensemble
-                  et façonnons la solution idéale étape par étape.
-                </p>
+                <span className="welcome-kicker">✦ {ui.welcomeKicker}</span>
+                <h1>{ui.welcomeTitle}</h1>
+                <p>{ui.welcomeDescription}</p>
               </div>
 
               {/* Prompt Suggestion Cards */}
               <div className="chatgpt-suggestions-grid">
-                {PROMPT_SUGGESTIONS.map((item, index) => (
+                {ui.suggestions.map((item, index) => (
                   <button
                     className="chatgpt-suggestion-card"
                     key={index}
@@ -662,10 +1145,10 @@ export default function AiHero() {
                     <span className="companion-dot" data-state={robotState} />
                     <span className="companion-state-text">
                       {robotState === "talking"
-                        ? "Aether vous répond..."
+                        ? ui.speaking
                         : robotState === "thinking"
-                          ? "En réflexion..."
-                          : "À votre écoute"}
+                          ? ui.thinking
+                          : ui.listening}
                     </span>
                     {robotState === "talking" && (
                       <span className="voice-wave-mini">
@@ -681,7 +1164,7 @@ export default function AiHero() {
                   </div>
                   <div className="companion-meta">
                     <strong>Aether AI</strong>
-                    <span>Architecture & Code</span>
+                    <span>{ui.robotSubtitle}</span>
                   </div>
                 </div>
               </aside>
@@ -701,7 +1184,7 @@ export default function AiHero() {
                         <div className="message-avatar-wrap">
                           <span aria-hidden="true" className="message-avatar">
                             <Image
-                              alt="Aether IT Logo"
+                              alt={language === "fr" ? "Logo Aether IT" : "Aether IT logo"}
                               className="message-avatar-img"
                               height={22}
                               src="/images/aetherit-logo.png"
@@ -714,7 +1197,7 @@ export default function AiHero() {
                       <div className="message-bubble-wrap">
                         <div className="message-header">
                           <span className="message-author">
-                            {isUser ? "Vous" : "Aether IT"}
+                            {isUser ? (language === "fr" ? "Vous" : "You") : "Aether IT"}
                           </span>
                         </div>
                         <div className="message-text">
@@ -724,7 +1207,7 @@ export default function AiHero() {
                         {!isUser && (
                           <div className="message-actions-bar">
                             <button
-                              aria-label="Copier le texte"
+                              aria-label={ui.copyLabel}
                               className="msg-action-btn"
                               onClick={() => handleCopy(message.id, message.content)}
                               type="button"
@@ -740,7 +1223,7 @@ export default function AiHero() {
                                       strokeWidth="1.8"
                                     />
                                   </svg>
-                                  <span>Copié !</span>
+                                  <span>{ui.copied}</span>
                                 </>
                               ) : (
                                 <>
@@ -761,13 +1244,13 @@ export default function AiHero() {
                                       strokeWidth="1.5"
                                     />
                                   </svg>
-                                  <span>Copier</span>
+                                  <span>{ui.copy}</span>
                                 </>
                               )}
                             </button>
 
                             <button
-                              aria-label="Écouter la réponse"
+                              aria-label={ui.listen}
                               className="msg-action-btn"
                               onClick={() => triggerSpeech(message.content)}
                               type="button"
@@ -781,7 +1264,7 @@ export default function AiHero() {
                                   strokeWidth="1.5"
                                 />
                               </svg>
-                              <span>Écouter</span>
+                              <span>{ui.listen}</span>
                             </button>
                           </div>
                         )}
@@ -790,13 +1273,32 @@ export default function AiHero() {
                   );
                 })}
 
+                {projectAnalysis && (
+                  <section aria-live="polite" className="chatgpt-analysis-result">
+                    <h2>{ui.analysisTitle}</h2>
+                    <h3>{ui.analysisSummary}</h3>
+                    <p>{projectAnalysis.summary}</p>
+                    <details>
+                      <summary>{ui.analysisDetails}</summary>
+                      <dl>
+                        {analysisFieldOrder.map((field) => (
+                          <div key={field}>
+                            <dt>{ui.analysisLabels[field]}</dt>
+                            <dd>{projectAnalysis[field]}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </details>
+                  </section>
+                )}
+
                 {/* Shimmer Thinking Indicator */}
                 {isSending && (
                   <article className="chatgpt-message-row ai-row thinking-row">
                     <div className="message-avatar-wrap">
                       <span aria-hidden="true" className="message-avatar pulse-avatar">
                         <Image
-                          alt="Aether IT Logo"
+                          alt={language === "fr" ? "Logo Aether IT" : "Aether IT logo"}
                           className="message-avatar-img"
                           height={22}
                           src="/images/aetherit-logo.png"
@@ -809,7 +1311,7 @@ export default function AiHero() {
                         <span className="message-author">Aether IT</span>
                       </div>
                       <div className="thinking-bubble">
-                        <span className="thinking-text">Aether réfléchit à votre projet</span>
+                        <span className="thinking-text">{ui.thinkingMessage}</span>
                         <span className="typing-dots">
                           <span />
                           <span />
@@ -832,14 +1334,14 @@ export default function AiHero() {
           {!projectReady && !isSignedIn && (
             <div className="guest-info-strip">
               <span className="guest-strip-label">
-                <span className="strip-sparkle">✦</span> Pour enregistrer votre projet et débuter l’échange :
+                <span className="strip-sparkle">✦</span> {ui.guestDetails}
               </span>
               <div className="guest-strip-inputs">
                 <input
                   autoComplete="given-name"
                   maxLength={100}
                   onChange={(e) => setGuestName(e.target.value)}
-                  placeholder="Votre prénom"
+                  placeholder={ui.firstName}
                   required
                   type="text"
                   value={guestName}
@@ -848,7 +1350,7 @@ export default function AiHero() {
                   autoComplete="email"
                   maxLength={254}
                   onChange={(e) => setGuestEmail(e.target.value)}
-                  placeholder="Votre adresse e-mail"
+                  placeholder={ui.email}
                   required
                   type="email"
                   value={guestEmail}
@@ -867,13 +1369,42 @@ export default function AiHero() {
             </div>
           )}
 
+          <div className="chatgpt-ready-prompts">
+            <label htmlFor="chatgpt-ready-prompt">{ui.readyPromptsLabel}</label>
+            <select
+              disabled={isSending || isFinishing || isRestoring || conversationFinished}
+              id="chatgpt-ready-prompt"
+              onChange={(event) => {
+                const select = event.currentTarget;
+                const prompt = select.value;
+                if (!prompt) return;
+                setInputValue((current) =>
+                  current.trim() ? `${current.trim()}\n\n${prompt}` : prompt,
+                );
+                select.value = "";
+                textareaRef.current?.focus();
+              }}
+              value=""
+            >
+              <option disabled value="">
+                {ui.readyPromptsLabel}
+              </option>
+              {ui.readyPrompts.map(({ label, prompt }) => (
+                <option key={label} value={prompt}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <p>{ui.readyPromptsHint}</p>
+          </div>
+
           <form className="chatgpt-pill-composer" onSubmit={handleSubmit}>
             <textarea
               autoComplete="off"
-              disabled={isSending || isRestoring}
+              disabled={isSending || isFinishing || isRestoring || conversationFinished}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="Envoyez un message à Aether IT… (Entrée pour envoyer, Maj+Entrée pour un saut de ligne)"
+              placeholder={ui.sendPlaceholder}
               ref={textareaRef}
               rows={1}
               value={inputValue}
@@ -881,9 +1412,9 @@ export default function AiHero() {
 
             <div className="composer-action-group">
               <button
-                aria-label="Envoyer votre message"
-                className={`chatgpt-send-button${inputValue.trim().length > 0 && !isSending ? " can-send" : ""}`}
-                disabled={!inputValue.trim() || isSending || isRestoring}
+                aria-label={ui.send}
+                className={`chatgpt-send-button${inputValue.trim().length > 0 && !isSending && !isFinishing && !conversationFinished ? " can-send" : ""}`}
+                disabled={!inputValue.trim() || isSending || isFinishing || isRestoring || conversationFinished}
                 type="submit"
               >
                 {isSending ? (
@@ -903,8 +1434,20 @@ export default function AiHero() {
             </div>
           </form>
 
+          {projectReady && hasMessages && !conversationFinished && (
+            <button
+              className="chatgpt-finish-button"
+              disabled={isSending || isFinishing || isRestoring}
+              onClick={() => void finishConversation()}
+              type="button"
+            >
+              {isFinishing ? ui.finishingConversation : ui.finishConversation}
+            </button>
+          )}
+          {conversationFinished && <p className="chatgpt-finish-status">{ui.finishSuccess}</p>}
+
           <footer className="chatgpt-disclaimer">
-            <span>Aether IT peut faire des erreurs. Vos données et projets restent strictement confidentiels.</span>
+            <span>{ui.disclaimer}</span>
           </footer>
         </div>
       </div>

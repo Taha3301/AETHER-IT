@@ -1,6 +1,7 @@
 import { connection } from "next/server";
 import { handleApiError, hasSameOrigin } from "@/lib/api";
 import { UserRole } from "@prisma/client";
+import { removeProjectAnalysisExport } from "@/lib/document-export";
 import { prisma } from "@/lib/prisma";
 import { requireProjectAccess } from "@/lib/project-access";
 import { updateProjectSchema } from "@/lib/project-validation";
@@ -82,5 +83,45 @@ export async function PATCH(request: Request, context: RouteContext): Promise<Re
     return Response.json({ project });
   } catch (error) {
     return handleApiError(error, "Update project");
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext): Promise<Response> {
+  if (!hasSameOrigin(request)) {
+    return Response.json({ error: "Cross-origin requests are not allowed." }, { status: 403 });
+  }
+
+  try {
+    const { id } = await context.params;
+    const access = await requireProjectAccess(request, id);
+    if (access.response) return access.response;
+
+    const documents = await prisma.document.findMany({
+      where: { projectId: id },
+      select: { filePath: true },
+    });
+    await prisma.project.delete({ where: { id } });
+
+    const cleanupResults = await Promise.allSettled(
+      documents.map((document) => removeProjectAnalysisExport(document.filePath)),
+    );
+    const cleanupErrors = cleanupResults.filter(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (cleanupErrors.length > 0) {
+      for (const result of cleanupErrors) {
+        console.error(
+          "[Project deletion file cleanup]",
+          result.reason instanceof Error ? result.reason.name : "UnknownError",
+        );
+      }
+      return Response.json({
+        deleted: true,
+        warning: "Le projet a été supprimé, mais certains fichiers générés n’ont pas pu être effacés.",
+      });
+    }
+    return Response.json({ deleted: true });
+  } catch (error) {
+    return handleApiError(error, "Delete project");
   }
 }
